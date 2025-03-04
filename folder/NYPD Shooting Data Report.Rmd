@@ -1,0 +1,329 @@
+---
+title: "NYPD Shooting Incident Data Report"
+author: "B. Knight"
+date: "12/2/2024"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+This data report consists of every shooting incident in New York from 2006 to 2023.
+
+This data is manually updated quarterly and reviewed by the Office of Management Analysis and Planning before being published on the NYPD website. Each entry represents a shooting incident, including details about the event, its location, and the time it occurred. Additionally, demographic information about the suspects and victims is included. The public can use this data to analyze trends in shooting and criminal activity. For more details, refer to the NYPD Shooting Incident Data (Historic) on CKAN.
+
+# Step 0: Import Library
+
+``` {r install.packages}
+# install.packages("tidyverse")
+library(tidyverse)
+library(lubridate)
+library(readr)
+library(ggplot2)
+```
+
+# Step 1: Load Data
+
+``` {r load-data, message = FALSE}
+
+# URL of the raw CSV file
+url_NYPD <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+
+# Read the CSV file
+shooting_data <- read_csv(url_NYPD)
+
+# Display the first few rows
+head(data)
+
+```
+
+# Step 1: Data Cleaning / Transform
+
+### Step 1.a: Check for Missing Values
+```{r check-missing-values}
+# Summarize missing values for each column
+missing_summary <- colSums(is.na(shooting_data))
+missing_summary
+```
+
+### Step 1.b: Rename Columns for Consistency
+```{r rename-columns}
+# Rename the "BORO" column to "BOROUGH" before making all headers consistent
+shooting_data <- shooting_data %>%
+  rename(BOROUGH = BORO) %>%
+  rename_all(~str_replace_all(., " ", "_") %>% tolower())
+
+# Display the new column names
+colnames(shooting_data)
+```
+
+### Step 1.c: Remove Duplicates
+```{r remove-duplicates}
+# Check for and remove duplicate rows
+shooting_data <- shooting_data %>%
+  distinct()
+
+# Confirm the number of rows after removing duplicates
+nrow(shooting_data)
+```
+
+### Step 1.d: Handle Missing Data
+```{r handle-missing-data}
+# Replace missing values in selected columns with "Unknown" or similar placeholders
+shooting_data <- shooting_data %>%
+  mutate(across(c(perp_race, perp_sex, vic_race, vic_sex), ~replace_na(., "Unknown")))
+
+# Verify changes
+summary(shooting_data)
+```
+
+### Step 1.e: Convert Dates to Proper Format
+```{r convert-dates}
+# Convert date columns to Date format
+shooting_data <- shooting_data %>%
+  mutate(occur_date = as.Date(occur_date, format = "%m/%d/%Y"))
+
+# Verify the date conversion
+summary(shooting_data$occur_date)
+```
+
+
+### Step 1.f: Filter and Select Relevant Columns
+```{r filter-select-columns}
+# Keep only relevant columns for analysis
+shooting_data <- shooting_data %>%
+  select(occur_date, occur_time, borough, precinct, perp_race, vic_race, perp_age_group, vic_age_group, statistical_murder_flag)
+
+# Display the structure of the cleaned dataset
+glimpse(shooting_data)
+
+```
+
+
+### Step 1.g: Save the Cleaned Dataset
+
+
+# Step 2: Visualization
+
+**The next visualizations will help answer the following two questions:**
+
+- Which borough has the highest number of shooting incidents?
+
+- What is the most dangerous month to in New York in terms of shooting incidents?
+
+Brooklyn looks to be the most dangerous while July seems to be the most dangerous month.
+
+
+```{r visualize-top-boroughs, message=FALSE, warning=FALSE}
+
+# Count the number of shooting incidents per borough
+borough_counts <- shooting_data %>%
+  count(borough, sort = TRUE) %>%
+  slice_max(n, n = 5) # Get the top 5 boroughs
+
+# Create a bar plot for the top 5 boroughs
+ggplot(borough_counts, aes(x = reorder(borough, -n), y = n, fill = borough)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  labs(
+    title = "Top 5 Boroughs for Shooting Incidents",
+    x = "Borough",
+    y = "Number of Shooting Incidents"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r visualize-dangerous-months, message=FALSE, warning=FALSE}
+# Extract the month from the occur_date column
+shooting_data <- shooting_data %>%
+  mutate(month = lubridate::month(occur_date, label = TRUE, abbr = TRUE))
+
+# Count incidents by month
+monthly_counts <- shooting_data %>%
+  count(month, sort = TRUE)
+
+# Create a bar plot for shooting incidents by month
+ggplot(monthly_counts, aes(x = reorder(month, -n), y = n, fill = month)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  labs(
+    title = "Number of Shooting Incidents by Month in NYC",
+    x = "Month",
+    y = "Number of Incidents"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+```{r visualize-linegraph-top-boroughs, message=FALSE, warning=FALSE}
+# Extract the year from the occur_date column
+shooting_data <- shooting_data %>%
+  mutate(year = lubridate::year(occur_date))
+
+# Count shootings per borough per year
+NYPD_boro_year <- shooting_data %>%
+  group_by(year, borough) %>%
+  summarise(shootings = n(), .groups = "drop")
+
+# Display the first few rows
+head(NYPD_boro_year)
+
+ggplot(NYPD_boro_year, aes(x = year, y = shootings, color = borough)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "NYPD Shootings by Borough by Year",
+    subtitle = "(2006 - 2023)",
+    x = "Year",
+    y = "Number of Shootings",
+    caption = "(Figure - 4)"
+  ) +
+  theme_minimal() +
+  theme(legend.title = element_text(size = 12),
+        legend.text = element_text(size = 10),
+        plot.title = element_text(size = 14, face = "bold"),
+        plot.subtitle = element_text(size = 12))
+
+```
+```{R}
+NYPD_time_year <- shooting_data %>%
+  mutate(time_year = format(as.Date(occur_date), "%m/%d")) %>%
+  mutate(time_year = as.Date(time_year,"%m/%d")) %>%
+  group_by(time_year) %>%
+  summarize(shootings = n(),
+            murder_flag_sum = sum(statistical_murder_flag == TRUE, na.rm = TRUE),
+            .groups = 'drop') %>%
+  select(time_year, shootings, murder_flag_sum) %>%
+  ungroup()
+```
+
+```{r}
+NYPD_time_year %>% slice_max(shootings, n = 2)
+
+NYPD_July_5 <- shooting_data %>%
+  mutate(time_year = format(as.Date(occur_date), "%m/%d"),
+         hour = hour(occur_time)) %>%
+  mutate(time_year = as.Date(time_year,"%m/%d")) %>%
+  filter(time_year == "2022-07-05") %>%
+  group_by(hour) %>%
+  summarize(shootings = n(),
+            .groups = 'drop')
+
+NYPD_time_year %>%
+  ggplot(aes(x = time_year, y = shootings)) +
+  geom_line() +
+  geom_point(data = NYPD_time_year %>% slice_max(shootings, n = 2),
+             aes(color="Most Shootings")) +
+  scale_x_date(date_labels = "%b") +
+  labs(title = "NYPD Shootings on that Day",
+       subtitle = "(2006 - 2021)",
+       colour = "",
+       x = "Day",
+       y = "Shootings on that day",
+       caption = "(Figure - 6)")
+```
+
+
+
+# Step 3: Modeling shooting data for statistical analysis
+
+### Logistic Regression Model for Analyzing Shooting Data
+
+In this section, we build a logistic regression model to explore the factors associated with shooting incidents being classified as murders. This type of analysis helps to identify patterns and relationships within the data, potentially aiding in better understanding and prevention efforts.
+
+#### Model Overview:
+- **Outcome Variable:** `murder_flag` (1 if the incident was classified as a murder, 0 otherwise).
+- **Predictors:**
+  - **Perpetrator's Race:** To examine demographic trends.
+  - **Borough:** To explore geographical variations in incidents.
+  - **Perpetrator's Age Group:** To investigate how age demographics correlate with murder classification.
+
+The logistic regression model outputs the estimated relationship between each predictor and the likelihood of an incident being classified as a murder. These results help highlight significant factors that may warrant further investigation or policy consideration.
+
+
+
+```{r logistic-regression-model, message=FALSE, warning=FALSE}
+# Prepare data for modeling
+model_data <- shooting_data %>%
+  filter(!is.na(statistical_murder_flag) & !is.na(perp_race) & !is.na(borough)) %>% # Remove rows with missing values
+  mutate(
+    murder_flag = as.numeric(statistical_murder_flag == "TRUE"), # Convert murder flag to numeric
+    perp_race = as.factor(perp_race),                           # Convert to factor
+    borough = as.factor(borough)                                # Convert to factor
+  )
+
+# Fit logistic regression model
+logistic_model <- glm(
+  murder_flag ~ perp_race + borough + perp_age_group,
+  data = model_data,
+  family = binomial(link = "logit")
+)
+
+# Summarize the model
+summary(logistic_model)
+```
+
+### Explanation:
+1. **Data Preparation:**
+   - Filter out rows with missing values in key columns (`statistical_murder_flag`, `perp_race`, and `borough`).
+   - Convert `statistical_murder_flag` to a binary numeric variable (`murder_flag`) for modeling.
+   - Convert categorical variables (`perp_race` and `borough`) to factors.
+
+2. **Model Selection:**
+   - Logistic regression predicts whether an incident is a murder based on predictors like `perp_race`, `borough`, and `perp_age_group`.
+
+3. **Model Summary:**
+   - The `summary(logistic_model)` function provides insights into the relationships between predictors and the likelihood of an incident being classified as a murder.
+
+
+
+# Step 4: Analysis of Perpetrators' Race and Age Group
+
+Understanding the demographics of individuals involved in shooting incidents can provide insights into patterns and potential areas of intervention. The visualization below highlights the distribution of perpetrators' race and age group based on the reported data. Each bar represents the number of incidents attributed to a specific race, with colors differentiating the age groups.
+
+This chart helps identify:
+- Which racial groups have higher reported incidents.
+- How age groups are distributed within each racial group.
+
+By examining these trends, we can better understand demographic factors related to shooting incidents and design targeted prevention strategies.
+
+```{r visualize-perpetrators, message=FALSE, warning=FALSE}
+# Count incidents by perpetrator race and age group
+perp_stats <- shooting_data %>%
+  filter(!is.na(perp_race) & !is.na(perp_age_group)) %>% # Filter out missing values
+  count(perp_race, perp_age_group)
+
+# Create a grouped bar chart
+ggplot(perp_stats, aes(x = perp_race, y = n, fill = perp_age_group)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Shooting Incidents by Perpetrator's Race and Age Group",
+    x = "Perpetrator's Race",
+    y = "Number of Incidents",
+    fill = "Age Group"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+```
+
+# Step 5: Conclusion / Inisights
+
+The analysis of the NYPD shooting incident data has provided valuable insights into patterns and trends related to gun violence in New York City. Here's a summary of key findings:
+
+1. **Geographical Insights:** 
+   - The boroughs with the highest number of shooting incidents were identified, offering a clear picture of areas most affected by gun violence.
+
+2. **Temporal Trends:**
+   - Analysis of shooting incidents by month highlighted seasonal variations, with some months consistently experiencing higher levels of violence.
+   - A frequency distribution by time of day revealed patterns in the timing of incidents, suggesting potential hotspots for intervention during specific hours.
+
+3. **Demographic Patterns:**
+   - Perpetrators' race and age group distributions provided demographic insights, showing which groups were more frequently involved in reported incidents.
+   - This information can guide targeted outreach and community engagement initiatives.
+
+4. **Predictive Modeling:**
+   - A logistic regression model was constructed to identify factors influencing whether a shooting incident was classified as a murder. The results pointed to significant relationships between demographics, location, and the likelihood of an incident resulting in a fatality.
+
+#### Final Thoughts:
+This analysis sheds light on critical aspects of gun violence in NYC, offering data-driven insights for policymakers, law enforcement, and community organizations. By focusing resources on high-risk areas, times, and demographics, there is an opportunity to design more effective prevention and intervention strategies. Future research could explore additional variables, such as socioeconomic factors or repeat offenders, to further enhance the understanding of this complex issue.
+
